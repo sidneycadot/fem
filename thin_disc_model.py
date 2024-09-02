@@ -1,5 +1,7 @@
 #! /usr/bin/env python3
 
+import time
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -41,14 +43,14 @@ class Disc:
     def inside(self, x: float, y: float):
         return (self.x - x) ** 2 + (self.y - y) ** 2 < self.radius ** 2
 
-def main():
+def run_sim(resolution: int):
 
-    coord = Coord2D(300, 300, 1.0, 1.0)
+    coord = Coord2D(resolution, resolution, 0.50, 0.50)
 
-    disc = Disc(0.0, 0.0, 0.40)
+    disc = Disc(0.0, 0.0, 0.20)
 
-    source = Point(-0.20, -0.10)
-    sink  = Point(0.30, 0.17)
+    source = Point(-0.10, 0)
+    sink  = Point(+0.10, 0)
 
     source_grid_point = coord.physical_to_integer_grid(source.x, source.y)
     sink_grid_point = coord.physical_to_integer_grid(sink.x, sink.y)
@@ -75,6 +77,10 @@ def main():
     print("source and sink are both in the grid.")
 
     # set up equations.
+
+    source_voltage = 1.0e-3
+    sink_voltage = 0.0e-3
+
     a = np.zeros((n, n))
     b = np.zeros(n)
 
@@ -82,11 +88,11 @@ def main():
         if grid_point == source_grid_point:
             print("adding equation for source:", index)
             a[index, index] = 1.0
-            b[index] = 1.0
+            b[index] = source_voltage
         elif grid_point == sink_grid_point:
             print("adding equation for sink:", index)
             a[index, index] = 1.0
-            b[index] = 0.0
+            b[index] = sink_voltage
         else:
             count_neighbors = 0
             for (dx, dy) in ((+1, 0), (0, +1), (-1, 0), (0, -1)):
@@ -100,7 +106,9 @@ def main():
                 b[index] = 0.0
 
     print("solving...")
+    t1 = time.monotonic()
     voltages = np.linalg.solve(a, b)
+    t2 = time.monotonic()
     print("solved.")
 
     image = np.full((coord.v_pixels, coord.h_pixels), np.nan)
@@ -108,25 +116,64 @@ def main():
         (gx, gy) = index_to_grid_point[index]
         image[gy, gx] = v
 
+    plt.clf()
+    plt.imshow(image)
+    plt.pause(1e-3)
+
     current_probes = {
         "source": source_grid_point,
         "sink": sink_grid_point,
     }
 
+    conductance = 2.65e-8 # Ohm·m    aluminium
+    thickness   = 16.0e-6 # 16 um    aluminium foil
+
+    element_resistance = conductance/thickness
+
+    la_resistance = None
     for (name, grid_point) in current_probes.items():
         index = grid_point_to_index[grid_point]
         current = 0.0
-        resistance = 1.0
         for (dx, dy) in ((+1, 0), (0, +1), (-1, 0), (0, -1)):
             xx = grid_point[0] + dx
             yy = grid_point[1] + dy
             neighbor_index = grid_point_to_index.get((xx, yy))
             if neighbor_index is not None:
-                current += (voltages[neighbor_index] - voltages[index]) / resistance
+                current += (voltages[neighbor_index] - voltages[index]) / element_resistance
+        print("resolution {} name {} current {} resistance {}".format(resolution, name, current, (source_voltage - sink_voltage) / current))
+        if name == "sink":
+            la_resistance = float((source_voltage - sink_voltage) / current)
 
-        print("current:", name, current)
+    return (t2 - t1, la_resistance)
 
-    plt.imshow(image)
+def main():
+
+    resolutions = np.arange(50, 101, 10)
+    resistances = []
+    durations = []
+
+    for resolution in resolutions:
+        (duration, resistance) = run_sim(resolution)
+        durations.append(duration)
+        resistances.append(resistance)
+
+    print("data:")
+    print(resolutions)
+    print(resistances)
+    print(durations)
+
+    plt.clf()
+    plt.subplot(211)
+    plt.title("calculated resistance")
+    plt.xlabel("resolution [px]")
+    plt.ylabel("resistance [Ohm]")
+    plt.plot(resolutions, resistances)
+    plt.subplot(212)
+    plt.title("calculation time")
+    plt.xlabel("resolution [px]")
+    plt.ylabel("time [s]")
+    plt.plot(resolutions, durations)
+    plt.pause(1e-2)
     plt.show()
 
 if __name__ == "__main__":
